@@ -332,10 +332,6 @@ namespace librealsense
         }
         update_next_expected( matcher, f );
 
-        // We want to keep track of a "last-arrived" frame which is our current equivalent of "now" -- it contains the
-        // latest timestamp/frame-number/etc. that we can compare to.
-        auto const last_arrived = f->get_header();
-
         if( ! _frames_queue[matcher.get()].q.enqueue( std::move( f ) ) )
             // If we get stopped, nothing to do!
             return;
@@ -345,19 +341,15 @@ namespace librealsense
         // If we have a Color frame but not Depth, then Depth is "missing" and needs to be
         // waited-for...
 
-        std::vector< frame_holder * > frames_arrived;
-        std::vector< librealsense::matcher * > frames_arrived_matchers;
+        std::map<librealsense::matcher *, frame_holder> frames_arrived;
         std::vector< int > synced_frames;
         std::vector< int > unsynced_frames;
         std::vector< librealsense::matcher * > missing_streams;
+        std::vector< frame_holder > match;
 
+        LOG_DEBUG("[WOJTEK] " << __func__ << ':' << *f.frame);
         while( true )
         {
-            missing_streams.clear();
-            frames_arrived_matchers.clear();
-            frames_arrived.clear();
-
-            std::vector< frame_holder > match;
             {
                 // We don't want to stop while syncing!
                 std::lock_guard< std::mutex > lock( _mutex );
@@ -365,111 +357,42 @@ namespace librealsense
                 // We want to release one frame from each matcher. If a matcher has nothing queued, it is "missing" and
                 // we need to consider waiting for it:
                 for( auto s = _frames_queue.begin(); s != _frames_queue.end(); s++ )
+                        if (s->second.q.empty()) return;
+
+                for( auto s = _frames_queue.begin(); s != _frames_queue.end(); s++ )
                 {
                     librealsense::matcher * const m = s->first;
-                    if( ! s->second.q.peek( [&]( frame_holder & fh ) {
-                            LOG_IF_ENABLE( "... have " << *fh.frame, env );
-                            frames_arrived.push_back( &fh );
-                            frames_arrived_matchers.push_back( m );
-                        } ) )
-                    {
-                        missing_streams.push_back( m );
-                    }
-                }
-                if( frames_arrived.empty() )
-                {
-                    // LOG_IF_ENABLE( "... nothing more to do", env );
-                    break;
+                    while(s->second.q.try_dequeue(&frames_arrived[m]))
+                            ;
                 }
 
                 // From what we collected, we want to release only the frames that are synchronized (based on timestamp,
                 // number, etc.) -- anything else we'll leave to the next iteration. The synced frames should be the
                 // earliest possible!
 
-                frame_holder * curr_sync = frames_arrived[0];
-                synced_frames.clear();
-                synced_frames.push_back( 0 );
-
-                // Sometimes we have to release newly-arrived frames even before frames we already had previously
-                // queued. If we have something like this, 'have_unsynced_frames' will be true:
-                unsynced_frames.clear();
-                for( auto i = 1; i < frames_arrived.size(); i++ )
-                {
-                    if( are_equivalent( *curr_sync, *frames_arrived[i] ) )
-                    {
-                        synced_frames.push_back( i );
-                    }
-                    else if( is_smaller_than( *frames_arrived[i], *curr_sync ) )
-                    {
-                        unsynced_frames.insert( unsynced_frames.end(), synced_frames.begin(), synced_frames.end() );
-                        synced_frames.clear();
-                        synced_frames.push_back( i );
-                        curr_sync = frames_arrived[i];
-                    }
-                    else
-                    {
-                        unsynced_frames.push_back( i );
-                    }
-                }
-                bool release_synced_frames = ( synced_frames.size() != 0 );
-                if( unsynced_frames.empty() )
-                {
-                    // Everything (could be only one!) matches together... but if we also have
-                    // something missing, we can't release anything yet...
-                    for( auto i : missing_streams )
-                    {
-                        LOG_IF_ENABLE( "... missing " << i->get_name() << ", next expected @"
-                                                      << rsutils::string::from( _next_expected[i].value ) << " (from "
-                                                      << rsutils::string::from( _next_expected[i].fps ) << " fps)",
-                                       env );
-                        if( skip_missing_stream( *curr_sync, i, last_arrived, env ) )
-                        {
-                            LOG_IF_ENABLE( "...     cannot be synced; not waiting for it", env );
-                            continue;
-                        }
-
-                        LOG_IF_ENABLE( "...     waiting for it", env );
-                        release_synced_frames = false;
-                    }
-                }
-                else
-                {
-                    for( auto i : unsynced_frames )
-                    {
-                        LOG_IF_ENABLE( "  - " << *frames_arrived[i]->frame << " is not in sync; won't be released", env );
-                    }
-                }
-                if( ! release_synced_frames )
-                    break;
-
-                match.reserve( synced_frames.size() );
-
-                for( auto index : synced_frames )
-                {
-                    frame_holder frame;
-                    int const timeout_ms = 5000;
-                    librealsense::matcher * m = frames_arrived_matchers[index];
-                    _frames_queue[m].q.dequeue( &frame, timeout_ms );
-                    match.push_back( std::move( frame ) );
-                }
+                for(auto& matches: frames_arrived)
+                        match.push_back(std::move(matches.second));
             }
 
             // The frameset should always be with the same order of streams (the first stream carries extra
             // meaning because it decides the frameset properties) -- so we sort them...
+            if (match.size() > 1 ) {
             std::sort( match.begin(),
                        match.end(),
                        []( const frame_holder & f1, const frame_holder & f2 ) {
                            return f1.frame->get_stream()->get_unique_id()
                                 > f2.frame->get_stream()->get_unique_id();
                        } );
-
+            }
 
             frame_holder composite = env.source->allocate_composite_frame(std::move(match));
             if (composite.frame)
             {
-                auto cb = begin_callback();
+                begin_callback();
+                LOG_DEBUG("[WOJTEK] " << __func__ << ':' << *composite.frame);
                 _callback(std::move(composite), env);
             }
+            break;
         }
     }
 
@@ -490,6 +413,7 @@ namespace librealsense
     }
     bool frame_number_composite_matcher::is_smaller_than(frame_holder & a, frame_holder & b)
     {
+        if (!a || !b) return false;
         return a->get_frame_number() < b->get_frame_number();
     }
     void frame_number_composite_matcher::clean_inactive_streams(frame_holder& f)
@@ -565,16 +489,14 @@ namespace librealsense
         auto min_fps = std::min(a_fps, b_fps);
 
         auto ts = extract_timestamps(a, b);
+        bool equal = are_equivalent(ts.first, ts.second, min_fps);
 
-        return  are_equivalent(ts.first, ts.second, min_fps);
+        return  equal;
     }
 
     bool timestamp_composite_matcher::is_smaller_than(frame_holder & a, frame_holder & b)
     {
-        if (!a || !b)
-        {
-            return false;
-        }
+        if (!a || !b) return false;
 
         auto ts = extract_timestamps(a, b);
 
@@ -737,8 +659,8 @@ namespace librealsense
         auto gap = 1000. / fps;
         if( std::abs( a - b ) < ( gap / 2 ) )
         {
-            //LOG_DEBUG( "...     " << rsutils::string::from( a ) << " == " << rsutils::string::from( b ) << "  {diff}"
-            //                      << std::abs( a - b ) << " < " << rsutils::string::from( gap / 2 ) << "{gap/2}" );
+            LOG_DEBUG( "...     " << rsutils::string::from( a ) << " == " << rsutils::string::from( b ) << "  {diff}"
+                                  << std::abs( a - b ) << " < " << rsutils::string::from( gap / 2 ) << "{gap/2}" );
             return true;
         }
 

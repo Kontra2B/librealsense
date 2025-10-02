@@ -87,7 +87,7 @@ declare -A camera_names=( [depth]=depth [rgb]=color [ir]=ir [imu]=imu )
 camera_vid=("depth" "depth-md" "color" "color-md" "ir" "ir-md" "imu")
 
 
-mdev=$(${v4l2_util} --list-devices | grep -A1 tegra | grep media)
+mdev=$(${v4l2_util} --list-devices | grep media)
 
 # For Jetson we have `simple` method
 if [ -n "${mdev}" ]; then

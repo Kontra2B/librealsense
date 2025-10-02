@@ -116,11 +116,9 @@ void uvc_sensor::open( const stream_profiles & requests )
         auto && req_profile_base = std::dynamic_pointer_cast< stream_profile_base >( req_profile );
         try
         {
-            unsigned long long last_frame_number = 0;
-            rs2_time_t last_timestamp = 0;
             _device->probe_and_commit(
                 req_profile_base->get_backend_profile(),
-                [this, req_profile_base, req_profile, last_frame_number, last_timestamp](
+                [this, req_profile_base, req_profile](
                     platform::stream_profile p,
                     platform::frame_object f,
                     std::function< void() > continuation ) mutable
@@ -135,6 +133,9 @@ void uvc_sensor::open( const stream_profiles & requests )
                                      << f.backend_time << " " << system_time );
                         return;
                     }
+		    auto last_frame_number = req_profile_base->getLastFrame();
+		    auto last_timestamp = req_profile_base->getLastTimestamp();
+		    LOG_DEBUG( "[WOJTEK] last_frame_number/" << req_profile_base->get_stream_type() << ": " << last_frame_number);
 
                     auto && fr = generate_frame_from_data( f,
                                                                  system_time,
@@ -160,24 +161,28 @@ void uvc_sensor::open( const stream_profiles & requests )
                             fr->additional_data.frame_number = ++_accel_counter;
                         else if( stream_type == 2 ) // 2 == Gyro
                             fr->additional_data.frame_number = ++_gyro_counter;
+			LOG_DEBUG( "[WOJTEK] overriding frame counter with motion stream data: " << frame_counter << '/' << fr->additional_data.frame_number);
                         frame_counter = fr->additional_data.frame_number;
                     }
                         
 
-                    LOG_DEBUG( "FrameAccepted,"
-                               << librealsense::get_string( req_profile_base->get_stream_type() ) << ",Counter,"
-                               << std::dec << fr->additional_data.frame_number << ",Index,"
-                               << req_profile_base->get_stream_index() << ",BackEndTS," << std::fixed << f.backend_time
-                               << ",SystemTime," << std::fixed << system_time << " ,diff_ts[Sys-BE],"
-                               << system_time - f.backend_time << ",TS," << std::fixed << timestamp << ",TS_Domain,"
-                               << rs2_timestamp_domain_to_string( timestamp_domain ) << ",last_frame_number,"
-                               << last_frame_number << ",last_timestamp," << last_timestamp );
+                    LOG_DEBUG( "FrameAccepted:"
+                               << librealsense::get_string( req_profile_base->get_stream_type() )
+			       << ", Counter:" << std::dec << fr->additional_data.frame_number
+			       << ", Index:" << req_profile_base->get_stream_index()
+			       << ", BackEndTS:" << std::fixed << f.backend_time
+                               << ", SystemTime:" << std::fixed << system_time
+			       << ", diff_ts[Sys-BE]:" << system_time - f.backend_time
+			       << ", TS:" << std::fixed << timestamp
+			       << ", TS_Domain:" << rs2_timestamp_domain_to_string( timestamp_domain )
+			       << ", last_frame_number:" << last_frame_number
+			       << ", last_timestamp:" << last_timestamp );
 
                     if( frame_counter <= last_frame_number )
-                        LOG_INFO( "Frame counter reset" );
+                        LOG_INFO( "Frame counter reset: " << last_frame_number << " => " << frame_counter);
 
-                    last_frame_number = frame_counter;
-                    last_timestamp = timestamp;
+                    req_profile_base->setLastFrame(frame_counter);
+                    req_profile_base->setLastTimestamp(timestamp);
 
                     const auto && vsp = As< video_stream_profile, stream_profile_interface >( req_profile );
                     int width = vsp ? vsp->get_width() : 0;

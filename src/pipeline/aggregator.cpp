@@ -47,7 +47,8 @@ namespace librealsense
                 for (int s : _streams_to_aggregate_ids)
                 {
                     if (!_last_set[s])
-                        return;
+                        LOG_DEBUG("[WOJTEK] " << __func__ << ": missing streams");
+                        // return;
                 }
 
                 // prepare the output frame set for wait_for_frames/poll_frames calls

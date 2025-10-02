@@ -93,10 +93,17 @@ namespace librealsense
         void create_snapshot(std::shared_ptr<stream_profile_interface>& snapshot) const override;
         void enable_recording(std::function<void(const stream_profile_interface&)> record_action) override;
 
+	rs2_metadata_type getLastFrame() { return _last_frame; }
+	void setLastFrame(rs2_metadata_type last_frame ) { _last_frame = last_frame; }
+
+	rs2_time_t getLastTimestamp() { return _last_timestamp; }
+	void setLastTimestamp(rs2_time_t last_timestamp ) { _last_timestamp = last_timestamp; }
     private:
         int _index = 1;
         int _uid = 0;
         rs2_stream _type = RS2_STREAM_ANY;
+	rs2_metadata_type _last_frame = 0;
+	rs2_time_t _last_timestamp = 0;
         rs2_format _format = RS2_FORMAT_ANY;
         uint32_t _framerate = 0;
         int _tag = profile_tag::PROFILE_TAG_ANY;

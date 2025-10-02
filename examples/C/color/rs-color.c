@@ -74,6 +74,9 @@ int main()
         exit(EXIT_FAILURE);
     }
 
+    unsigned long long old_frame_number = -1LL;
+    rs2_time_t old_frame_timestamp = 0;
+
     while (1)  // Until user presses Ctrl+C
     {
         // This call waits until a new composite_frame is available
@@ -85,6 +88,7 @@ int main()
         // Returns the number of frames embedded within the composite frame
         int num_of_frames = rs2_embedded_frames_count(frames, &e);
         check_error(e);
+
 
         int i;
         for (i = 0; i < num_of_frames; ++i)
@@ -110,17 +114,23 @@ int main()
             rs2_metadata_type frame_metadata_time_of_arrival = rs2_get_frame_metadata(frame, RS2_FRAME_METADATA_TIME_OF_ARRIVAL, &e);
             check_error(e);
 
-            printf("RGB frame arrived.\n");
-            printf("First 10 bytes: ");
-            int i;
-            for(i=0; i < 10; ++i)
-                printf("%02x ", rgb_frame_data[i]);
+	    if (!(frame_number%1000)) {
+		    printf("RGB frame arrived.\n");
+		    printf("First 10 bytes: ");
+		    int i;
+		    for(i=0; i < 10; ++i)
+			    printf("%02x ", rgb_frame_data[i]);
 
-            printf("\nFrame No: %llu\n", frame_number);
-            printf("Timestamp: %f\n", frame_timestamp);
-            printf("Timestamp domain: %s\n", frame_timestamp_domain_str);
-            printf("Time of arrival: %lld\n\n", frame_metadata_time_of_arrival);
+		    printf("\nFrame No: %llu/%llu\n", frame_number, old_frame_number);
+		    printf("Timestamp: %f/%f\n", frame_timestamp, old_frame_timestamp);
+		    printf("Timestamp domain: %s\n", frame_timestamp_domain_str);
+		    printf("Time of arrival: %lld\n\n", frame_metadata_time_of_arrival);
+	    }
             rs2_release_frame(frame);
+	    if (old_frame_number == frame_number) exit(1);
+	    if (old_frame_timestamp == frame_timestamp) exit(2);
+	    old_frame_number = frame_number;
+	    old_frame_timestamp = frame_timestamp;
         }
 
         rs2_release_frame(frames);

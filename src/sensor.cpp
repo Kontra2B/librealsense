@@ -314,10 +314,10 @@ void log_callback_end( uint32_t fps,
         int bpp = get_image_bpp(profile->get_format());
         auto frame_size = compute_frame_expected_size(width, height, bpp);
 
-        frame_additional_data additional_data(0,
+        frame_additional_data additional_data(0.0,
             0,
             system_time,
-            static_cast<uint8_t>(fo.metadata_size),
+            fo.metadata_size,
             (const uint8_t*)fo.metadata,
             fo.backend_time,
             last_timestamp,
@@ -328,11 +328,9 @@ void log_callback_end( uint32_t fps,
 
         if (_metadata_modifier)
             _metadata_modifier(additional_data);
-        fr->additional_data = additional_data;
 
         // update additional data
         additional_data.timestamp = timestamp_reader->get_frame_timestamp(fr);
-        additional_data.last_frame_number = last_frame_number;
         additional_data.frame_number = timestamp_reader->get_frame_counter(fr);
         fr->additional_data = additional_data;
 

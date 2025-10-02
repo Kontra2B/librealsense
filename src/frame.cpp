@@ -16,31 +16,22 @@ namespace librealsense {
 
 std::ostream & operator<<( std::ostream & s, const frame_interface & f )
 {
-    if( !&f )
-    {
-        s << "[null]";
-    }
-    else
-    {
-        auto composite = dynamic_cast<const composite_frame *>(&f);
-        if( composite )
-        {
-            s << "[";
-            for( int i = 0; i < composite->get_embedded_frames_count(); i++ )
-            {
-                s << *composite->get_frame( i );
-            }
-            s << "]";
-        }
-        else
-        {
-            s << "[" << get_abbr_string( f.get_stream()->get_stream_type() );
-            s << f.get_stream()->get_unique_id();
-            s << " " << f.get_header();
-            s << "]";
-        }
-    }
-    return s;
+	auto composite = dynamic_cast<const composite_frame *>(&f);
+	if( composite )
+	{
+		s << "[C/" << composite->get_embedded_frames_count();
+		for( int i = 0; i < composite->get_embedded_frames_count(); i++ )
+			s << *composite->get_frame( i );
+		s << ']';
+	}
+	else
+	{
+		s << "[" << get_abbr_string( f.get_stream()->get_stream_type() );
+		s << f.get_stream()->get_unique_id();
+		s << " " << f.get_header();
+		s << "]";
+	}
+	return s;
 }
 
 
