@@ -30,7 +30,7 @@ public:
         for( auto i = 0; i < C; i++ )
         {
             is_free[i] = true;
-            buffer[i] = std::move( T() );
+            // buffer[i] = std::move( T() );
         }
     }
 

@@ -149,17 +149,6 @@ namespace librealsense
         _name = create_composite_name(matchers, name);
     }
 
-    composite_matcher::matcher_queue::matcher_queue()
-        : q( QUEUE_MAX_SIZE,
-             []( frame_holder const & fh )
-             {
-                 // If queues are overrun, we'll get here
-                 LOG_DEBUG( "DROPPED frame " << fh );
-             } )
-    {
-    }
-
-
     void composite_matcher::dispatch(frame_holder f, const syncronization_environment& env)
     {
         clean_inactive_streams(f);
@@ -193,10 +182,7 @@ namespace librealsense
             if( matcher )
             {
                 if( ! matcher->get_active() )
-                {
                     matcher->set_active( true );
-                    _frames_queue[matcher.get()].q.start();
-                }
                 return matcher;
             }
         }
@@ -231,9 +217,7 @@ namespace librealsense
                 for (auto stream : matcher->get_streams())
                 {
                     if (_matchers[stream])
-                    {
-                        _frames_queue.erase(_matchers[stream].get());
-                    }
+                        _frames.erase(_matchers[stream].get());
                     _matchers[stream] = matcher;
                     _streams_id.push_back(stream);
                 }
@@ -287,10 +271,6 @@ namespace librealsense
         // Mark ourselves inactive, so we don't get new dispatches
         set_active( false );
 
-        // Stop all our queues to wake up anyone waiting on them
-        for( auto & fq : _frames_queue )
-            fq.second.q.stop();
-
         // Trickle the stop down to any children
         for( auto m : _matchers )
             m.second->stop();
@@ -310,90 +290,76 @@ namespace librealsense
     {
         std::ostringstream os;
         os << '[';
-        for( auto m : matchers )
-        {
-            auto const & q = _frames_queue[m].q;
-            q.peek( [&os]( frame_holder const & fh ) {
-                os << fh;
-                } );
-        }
+        for(auto m : matchers)
+                os << *_frames[m];
         os << ']';
         return os.str();
     }
 
     void composite_matcher::sync(frame_holder f, const syncronization_environment& env)
     {
-        auto matcher = find_matcher(f);
-        if (!matcher)
-        {
-            LOG_ERROR("didn't find any matcher for " << f << " will not be synchronized");
-            _callback(std::move(f), env);
-            return;
-        }
-        update_next_expected( matcher, f );
+            // We don't want to stop while syncing!
+            std::lock_guard< std::mutex > lock( _mutex );
 
-        if( ! _frames_queue[matcher.get()].q.enqueue( std::move( f ) ) )
-            // If we get stopped, nothing to do!
-            return;
-
-        // We have a queue for each known stream we want to sync.
-        // E.g., for (Depth Color), we need to sync two frames, one from each.
-        // If we have a Color frame but not Depth, then Depth is "missing" and needs to be
-        // waited-for...
-
-        std::map<librealsense::matcher *, frame_holder> frames_arrived;
-        std::vector< int > synced_frames;
-        std::vector< int > unsynced_frames;
-        std::vector< librealsense::matcher * > missing_streams;
-        std::vector< frame_holder > match;
-
-        LOG_DEBUG("[WOJTEK] " << __func__ << ':' << *f.frame);
-        while( true )
-        {
+            auto matcher = find_matcher(f);
+            if (!matcher)
             {
-                // We don't want to stop while syncing!
-                std::lock_guard< std::mutex > lock( _mutex );
+                    LOG_ERROR("didn't find any matcher for " << f << " will not be synchronized");
+                    _callback(std::move(f), env);
+                    return;
+            }
+            update_next_expected( matcher, f );
 
-                // We want to release one frame from each matcher. If a matcher has nothing queued, it is "missing" and
-                // we need to consider waiting for it:
-                for( auto s = _frames_queue.begin(); s != _frames_queue.end(); s++ )
-                        if (s->second.q.empty()) return;
+            if (_frames[matcher.get()])
+                    LOG_DEBUG("[WOJTEK] " << __func__ << ':' << "!new frame" << *_frames[matcher.get()].frame << " < " << *f.frame);
+            else
+                    LOG_DEBUG("[WOJTEK] " << __func__ << ':' << "new frame " << *f.frame);
+            _frames[matcher.get()] = std::move(f);
 
-                for( auto s = _frames_queue.begin(); s != _frames_queue.end(); s++ )
-                {
-                    librealsense::matcher * const m = s->first;
-                    while(s->second.q.try_dequeue(&frames_arrived[m]))
-                            ;
-                }
+            // We have a queue for each known stream we want to sync.
+            // E.g., for (Depth Color), we need to sync two frames, one from each.
+            // If we have a Color frame but not Depth, then Depth is "missing" and needs to be
+            // waited-for...
 
-                // From what we collected, we want to release only the frames that are synchronized (based on timestamp,
-                // number, etc.) -- anything else we'll leave to the next iteration. The synced frames should be the
-                // earliest possible!
+            std::vector< frame_holder > match;
+            rs2_time_t tref = 0.0, tmax = 0.0;
 
-                for(auto& matches: frames_arrived)
-                        match.push_back(std::move(matches.second));
+            // We want to release one frame from each matcher. If a matcher has nothing queued, it is "missing" and
+            // we need to consider waiting for it:
+            for(auto& entry: _frames) {
+                    if (!entry.second) {
+                            LOG_DEBUG("[WOJTEK] " << __func__ << ':' << "missing " << _name);
+                            return;
+                    }
+                    tref += entry.second.frame->get_frame_timestamp();
+                    auto fps = entry.second.frame->get_stream()->get_framerate();
+                    if (1.0/fps > tmax) tmax = 1.0/fps;
             }
 
-            // The frameset should always be with the same order of streams (the first stream carries extra
-            // meaning because it decides the frameset properties) -- so we sort them...
-            if (match.size() > 1 ) {
-            std::sort( match.begin(),
-                       match.end(),
-                       []( const frame_holder & f1, const frame_holder & f2 ) {
-                           return f1.frame->get_stream()->get_unique_id()
-                                > f2.frame->get_stream()->get_unique_id();
-                       } );
+            tref /= _frames.size();
+            tmax *= 1000/2.0/10.0;
+
+            LOG_DEBUG("[WOJTEK] " << __func__ << ':' << std::fixed << tref << '/' << tmax);
+            for(auto& entry: _frames) {
+                    auto diff = tref - entry.second.frame->get_frame_timestamp();
+                    if (diff > tmax) {
+                            LOG_DEBUG("[WOJTEK] " << __func__ << '/' << diff << ':' << *entry.second << " !too old");
+                            entry.second.reset();
+                            return;
+                    }
+                    LOG_DEBUG("[WOJTEK] " << __func__ << '/' << diff << ':' << *entry.second);
             }
+
+            for(auto& entry: _frames)
+                    match.push_back(std::move(entry.second));
 
             frame_holder composite = env.source->allocate_composite_frame(std::move(match));
             if (composite.frame)
             {
-                begin_callback();
-                LOG_DEBUG("[WOJTEK] " << __func__ << ':' << *composite.frame);
-                _callback(std::move(composite), env);
+                    begin_callback();
+                    LOG_DEBUG("[WOJTEK] " << __func__ << ':' << *composite.frame);
+                    _callback(std::move(composite), env);
             }
-            break;
-        }
     }
 
     frame_number_composite_matcher::frame_number_composite_matcher(
@@ -439,7 +405,7 @@ namespace librealsense
 
         for(auto id: inactive_matchers)
         {
-            _frames_queue[_matchers[id].get()].q.clear();
+            _frames[_matchers[id].get()].reset();
         }
     }
 
@@ -468,7 +434,7 @@ namespace librealsense
         _next_expected[matcher.get()].value = f.frame->get_frame_number()+1.;
     }
 
-    std::pair<double, double> extract_timestamps(frame_holder & a, frame_holder & b)
+    std::pair<rs2_time_t, rs2_time_t> extract_timestamps(frame_holder & a, frame_holder & b)
     {
         if (a->get_frame_timestamp_domain() == b->get_frame_timestamp_domain())
             return{ a->get_frame_timestamp(), b->get_frame_timestamp() };
@@ -639,11 +605,11 @@ namespace librealsense
                                << rsutils::string::from( next_expected.value + threshold ) << "; deactivating matcher!",
                            env );
 
-            auto const q_it = _frames_queue.find( missing );
-            if( q_it != _frames_queue.end() )
+            auto const q_it = _frames.find( missing );
+            if( q_it != _frames.end() )
             {
-                if( q_it->second.q.empty() )
-                    _frames_queue.erase( q_it );
+                if(!q_it->second)
+                    _frames.erase(q_it);
             }
             missing->set_active( false );
             return true;

@@ -13,7 +13,6 @@
 #include <memory>
 #include <map>
 
-
 namespace librealsense {
 
 
@@ -110,17 +109,9 @@ namespace librealsense {
 
     protected:
         virtual void update_next_expected( std::shared_ptr< matcher > const & matcher,
-                                           const frame_holder & f )
-            = 0;
+                                           const frame_holder & f ) = 0;
 
-        struct matcher_queue
-        {
-            single_consumer_frame_queue< frame_holder > q;
-
-            matcher_queue();
-        };
-
-        std::map< matcher *, matcher_queue > _frames_queue;
+        std::map<matcher *, frame_holder> _frames;
         std::map<stream_id, std::shared_ptr<matcher>> _matchers;
         struct next_expected_t
         {

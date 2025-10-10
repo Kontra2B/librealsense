@@ -57,6 +57,7 @@ namespace librealsense
                 std::vector<frame_holder> async_set;
                 for (auto&& s : _last_set)
                 {
+                    if (!s.second) continue;
                     sync_set.push_back(s.second.clone());
                     // send only the synchronized frames to the user callback
                     if (std::find(_streams_to_sync_ids.begin(), _streams_to_sync_ids.end(),

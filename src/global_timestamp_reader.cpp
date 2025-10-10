@@ -297,6 +297,7 @@ namespace librealsense
     {
         double frame_time = _device_timestamp_reader->get_frame_timestamp(frame);
         rs2_timestamp_domain ts_domain = _device_timestamp_reader->get_frame_timestamp_domain(frame);
+        auto raw = frame_time;
         if (_option_is_enabled->is_true() && ts_domain == RS2_TIMESTAMP_DOMAIN_HARDWARE_CLOCK)
         {
             auto sp = _time_diff_keeper.lock();
@@ -305,6 +306,7 @@ namespace librealsense
             else
                 LOG_DEBUG("Notification: global_timestamp_reader - time_diff_keeper is being shut-down");
         }
+        LOG_DEBUG("[WOJTEK] " << __func__ << ':' << std::fixed << raw << '/' << frame_time);
         return frame_time;
     }
 

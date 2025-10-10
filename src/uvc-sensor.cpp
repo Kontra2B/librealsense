@@ -135,7 +135,7 @@ void uvc_sensor::open( const stream_profiles & requests )
                     }
 		    auto last_frame_number = req_profile_base->getLastFrame();
 		    auto last_timestamp = req_profile_base->getLastTimestamp();
-		    LOG_DEBUG( "[WOJTEK] last_frame_number/" << req_profile_base->get_stream_type() << ": " << last_frame_number);
+		    LOG_DEBUG( "[WOJTEK] last_frame_number/timestamp/" << req_profile_base->get_stream_type() << ": " << last_frame_number << '/' << std::fixed << last_timestamp);
 
                     auto && fr = generate_frame_from_data( f,
                                                                  system_time,
@@ -165,18 +165,21 @@ void uvc_sensor::open( const stream_profiles & requests )
                         frame_counter = fr->additional_data.frame_number;
                     }
                         
+                    rs2_metadata_type  frameNo;
+                    fr->find_metadata(RS2_FRAME_METADATA_FRAME_COUNTER, &frameNo);
 
-                    LOG_DEBUG( "FrameAccepted:"
-                               << librealsense::get_string( req_profile_base->get_stream_type() )
-			       << ", Counter:" << std::dec << fr->additional_data.frame_number
-			       << ", Index:" << req_profile_base->get_stream_index()
-			       << ", BackEndTS:" << std::fixed << f.backend_time
-                               << ", SystemTime:" << std::fixed << system_time
-			       << ", diff_ts[Sys-BE]:" << system_time - f.backend_time
-			       << ", TS:" << std::fixed << timestamp
-			       << ", TS_Domain:" << rs2_timestamp_domain_to_string( timestamp_domain )
-			       << ", last_frame_number:" << last_frame_number
-			       << ", last_timestamp:" << last_timestamp );
+                    LOG_DEBUG( "FrameAccepted: "
+                                    << librealsense::get_string( req_profile_base->get_stream_type() )
+                                    << ", #" << std::dec << fr->additional_data.frame_number
+                                    << '/' << frameNo
+                                    << ", Idx:" << req_profile_base->get_stream_index()
+                                    << ", BackEndTS:" << std::fixed << f.backend_time
+                                    << ", SystemTime:" << std::fixed << system_time
+                                    << ", diff_ts[Sys-BE]:" << system_time - f.backend_time
+                                    << ", TS:" << std::fixed << timestamp
+                                    << ", TS_Domain:" << rs2_timestamp_domain_to_string( timestamp_domain )
+                                    << ", last_frame_number:" << last_frame_number
+                                    << ", last_timestamp:" << last_timestamp );
 
                     if( frame_counter <= last_frame_number )
                         LOG_INFO( "Frame counter reset: " << last_frame_number << " => " << frame_counter);

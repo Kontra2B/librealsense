@@ -61,7 +61,9 @@ namespace librealsense
         auto md = (librealsense::metadata_intel_basic*)(f->additional_data.metadata_blob.data());
         if(_has_metadata[pin_index] && md)
         {
-            return (double)(md->header.timestamp)*TIMESTAMP_USEC_TO_MSEC;
+            auto time = ((double)md->header.timestamp)*TIMESTAMP_USEC_TO_MSEC;
+        LOG_DEBUG("[WOJTEK] " << __func__ << ':' << md->header.timestamp << '/' << std::fixed << time);
+            return time;
         }
         else
         {
